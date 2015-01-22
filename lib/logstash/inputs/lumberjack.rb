@@ -29,6 +29,9 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   # SSL key passphrase to use.
   config :ssl_key_passphrase, :validate => :password
 
+  # The field name where the client IP address should be stored in each message
+  config :client_address_field, :validate => :string, :default => nil
+
   # TODO(sissel): Add CA to authenticate clients with.
 
   public
@@ -43,9 +46,12 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
   public
   def run(output_queue)
-    @lumberjack.run do |l|
+    @lumberjack.run do |l, client_address|
       @codec.decode(l.delete("line")) do |event|
         decorate(event)
+        if !@client_address_field.nil?
+          event[@client_address_field] = client_address
+        end
         l.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
         output_queue << event
       end
