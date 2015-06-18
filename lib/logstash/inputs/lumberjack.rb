@@ -29,6 +29,9 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   # SSL key passphrase to use.
   config :ssl_key_passphrase, :validate => :password
 
+  # Optional SSL certificate chain to use
+  config :ssl_cert_chain, :validate => :string
+
   # Number of maximum clients that the lumberjack input will accept, this allow you
   # to control the back pressure up to the client and stop logstash to go OOM with 
   # connection. This settings is a temporary solution and will be deprecated really soon.
@@ -45,7 +48,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     @logger.info("Starting lumberjack input listener", :address => "#{@host}:#{@port}")
     @lumberjack = Lumberjack::Server.new(:address => @host, :port => @port,
       :ssl_certificate => @ssl_certificate, :ssl_key => @ssl_key,
-      :ssl_key_passphrase => @ssl_key_passphrase)
+      :ssl_key_passphrase => @ssl_key_passphrase, :ssl_cert_chain => @ssl_cert_chain)
 
     # Limit the number of thread that can be created by the
     # lumberjack output, if the queue is full the input will 
