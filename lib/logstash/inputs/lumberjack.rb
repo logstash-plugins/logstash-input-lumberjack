@@ -77,12 +77,11 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
             begin
               decorate(event)
               fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
+              @circuit_breaker.execute { @buffered_queue << event }
             rescue => e
               File.open("/tmp/event-raised-exception.log", "a") { |file| file.write("exception raise from event id #{event["message"]}\n") }
-              raise
+              raise e
             end
-
-            @circuit_breaker.execute { @buffered_queue << event }
           end
         end
       else
