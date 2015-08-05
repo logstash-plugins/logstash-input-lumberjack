@@ -72,12 +72,15 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
         invoke(connection, codec.clone) do |_codec, line, fields|
           _codec.decode(line) do |event|
-            File.open("/tmp/debug-received.log", "a") do |file|
-              file.write("Event id #{event["message"]}\n")
-            end
+            File.open("/tmp/debug-received.log", "a") { |file| file.write("Event id #{event["message"]}\n") }
 
-            decorate(event)
-            fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
+            begin
+              decorate(event)
+              fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
+            rescue => e
+              File.open("/tmp/event-raised-exception.log", "a") { |file| file.write("exception raise from event id #{event["message"]}\n") }
+              raise
+            end
 
             @circuit_breaker.execute { @buffered_queue << event }
           end
@@ -118,6 +121,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
       rescue => e # If we have a malformed packet we should handle that so the input doesn't crash completely.
         @logger.error("Lumberjack input: unhandled exception", :exception => e, :backtrace => e.backtrace)
       end
+    end
   end
 
   def start_buffer_broker(output_queue)
