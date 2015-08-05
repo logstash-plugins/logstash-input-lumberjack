@@ -34,7 +34,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
   # TODO(sissel): Add CA to authenticate clients with.
 
-  BUFFERED_QUEUE_SIZE = 20
+  BUFFERED_QUEUE_SIZE = 1
   RECONNECT_BACKOFF_SLEEP = 0.5
   
   def register
@@ -73,6 +73,10 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
           invoke(connection, codec.clone) do |_codec, line, fields|
             _codec.decode(line) do |event|
+              File.open("/tmp/debug-received.log", "a") do |file|
+                file.write("Event id #{event["message"]}\n")
+              end
+
               decorate(event)
               fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
 
@@ -86,7 +90,10 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
         # When too many errors happen inside the circuit breaker it will throw 
         # this exception and start refusing connection, we need to catch it but 
         # it's safe to ignore.
-      rescue LogStash::CircuitBreaker::OpenBreaker => e
+      rescue LogStash::CircuitBreaker::OpenBreaker,
+        LogStash::CircuitBreaker::HalfOpenBreaker => e
+        logger.error("Lumberjack input: Connection closed, backing off")
+        sleep(RECONNECT_BACKOFF_SLEEP)
       end
     end
   rescue LogStash::ShutdownSignal
@@ -106,12 +113,8 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   private
   def invoke(connection, codec, &block)
     @threadpool.post do
-      begin
-        connection.run do |fields|
-          block.call(codec, fields.delete("line"), fields)
-        end
-      rescue => e
-        @logger.error("Exception in lumberjack input thread", :exception => e)
+      connection.run do |fields|
+        block.call(codec, fields.delete("line"), fields)
       end
     end
   end
