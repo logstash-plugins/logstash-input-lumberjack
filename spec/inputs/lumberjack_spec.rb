@@ -24,6 +24,10 @@ describe LogStash::Inputs::Lumberjack do
     end
   end
 
+  context "when interrupting the plugin" do
+    it_behaves_like "an interruptible input plugin"
+  end
+
   describe "#processing of events" do
     let(:lines) { {"line" => "one\ntwo\n  two.2\nthree\n", "tags" => ["syslog"]} }
 
@@ -43,7 +47,8 @@ describe LogStash::Inputs::Lumberjack do
       it "clone the codec per connection" do
         expect(lumberjack.codec).to receive(:clone).once
         expect(lumberjack).to receive(:invoke) { break }
-        lumberjack.run(queue)
+        th = Thread.new { lumberjack.run(queue) }
+        sleep(0.1) while th.status != "sleep"
       end
     end
   end
