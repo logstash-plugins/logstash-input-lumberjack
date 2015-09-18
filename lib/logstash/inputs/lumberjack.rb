@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "logstash/inputs/base"
 require "logstash/namespace"
+require "stud/interval"
 
 # Receive events using the lumberjack protocol.
 #
@@ -108,7 +109,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
           end
         else
           @logger.warn("Lumberjack input: the pipeline is blocked, temporary refusing new connection.")
-          sleep(RECONNECT_BACKOFF_SLEEP)
+          Stud.stoppable_sleep(RECONNECT_BACKOFF_SLEEP)
         end
       end
     end
