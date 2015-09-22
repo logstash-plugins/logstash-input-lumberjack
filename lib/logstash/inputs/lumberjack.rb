@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "logstash/inputs/base"
 require "logstash/namespace"
+require "stud/interval"
 
 # Receive events using the lumberjack protocol.
 #
@@ -63,41 +64,61 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     @circuit_breaker = LogStash::CircuitBreaker.new("Lumberjack input",
                             :exceptions => [LogStash::SizedQueueTimeout::TimeoutError])
 
+    @mutex = Mutex.new
+    @acccepting_connection = ConditionVariable.new
   end # def register
 
   def run(output_queue)
     start_buffer_broker(output_queue)
-
-    while true do
-      # Wrappingu the accept call into a CircuitBreaker
-      if @circuit_breaker.closed?
-        connection = @lumberjack.accept # Blocking call that creates a new connection
-
-        invoke(connection, @codec.clone) do |_codec, line, fields|
-          _codec.decode(line) do |event|
-            begin
-              decorate(event)
-              fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
-              @circuit_breaker.execute { @buffered_queue.push(event, @congestion_threshold) }
-            rescue => e
-              raise e
-            end
-          end
-        end
-      else
-        @logger.warn("Lumberjack input: the pipeline is blocked, temporary refusing new connection.")
-        sleep(RECONNECT_BACKOFF_SLEEP)
-      end
-    end
-  rescue LogStash::ShutdownSignal
-    @logger.info("Lumberjack input: received ShutdownSignal")
-  ensure
-    shutdown(output_queue)
+    start_accepting_connection
+    @mutex.synchronize { @acccepting_connection.wait(@mutex) while !stop? }
   end # def run
 
+  def stop
+    super
+
+    @threadpool.kill
+    @lumberjack.close
+    @mutex.synchronize { @acccepting_connection.signal }
+  end
+
   private
+  def start_accepting_connection
+    @threadpool.post do
+      LogStash::Util::set_thread_name("Lumberjack: New connection handler")
+
+      while !stop? do # accepting new connection
+        # Wrapping the accept call into a CircuitBreaker
+        if @circuit_breaker.closed?
+          connection = @lumberjack.accept # Blocking call that creates a new connection
+
+          invoke(connection, codec.clone) do |_codec, line, fields|
+            # We are currently stopping the pipeline, close the connection 
+            # and don't ack the current frame forcing a restransmit.
+            connection.close if stop?
+
+            _codec.decode(line) do |event|
+              begin
+                decorate(event)
+                fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
+                @circuit_breaker.execute { @buffered_queue.push(event, @congestion_threshold) }
+              rescue => e
+                raise e
+              end
+            end
+          end
+        else
+          @logger.warn("Lumberjack input: the pipeline is blocked, temporary refusing new connection.")
+          Stud.stoppable_sleep(RECONNECT_BACKOFF_SLEEP)
+        end
+      end
+    end
+  end
+
   def invoke(connection, codec, &block)
     @threadpool.post do
+      LogStash::Util::set_thread_name("Lumberjack: Connection")
+
       begin
         # If any errors occur in from the events the connection should be closed in the 
         # library ensure block and the exception will be handled here
@@ -121,7 +142,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
   def start_buffer_broker(output_queue)
     @threadpool.post do
-      while true
+      while !stop?
         output_queue << @buffered_queue.pop_no_timeout
       end
     end
