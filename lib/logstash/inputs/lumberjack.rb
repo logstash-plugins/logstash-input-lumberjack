@@ -98,16 +98,12 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   end # def run
 
   private
-  def data_event(line_codec, fields)
-  end
-
-  private
   def invoke(connection, codec, &block)
     @threadpool.post do
       begin
         # If any errors occur in from the events the connection should be closed in the
         # library ensure block and the exception will be handled here
-        client = Client.new(Decoration.new, code, connection)
+        client = ConnectionDecorator.new(EventDecoration.new, code, connection)
         client.run(&block)
 
         # When too many errors happen inside the circuit breaker it will throw
@@ -132,16 +128,16 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     end
   end
 
-  class Decoration < LogStash::Inputs::Base
+  class EventDecoration < LogStash::Inputs::Base
     public
     def decorate(event)
       super(event)
     end
-  end # class Decoration
+  end # class EventDecoration
 
-  class Client
-    def initialize(decoration, codec, connection)
-      @decoration = decoration
+  class ConnectionDecorator
+    def initialize(event_decoration, codec, connection)
+      @event_decoration = event_decoration
       @connection = connection
       @codec = codec
     end
@@ -193,7 +189,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
     private
     def decorate(event)
-      @decoration.decorate(event)
+      @event_decoration.decorate(event)
     end
-  end # Client
+  end # ConnectionDecorator
 end # class LogStash::Inputs::Lumberjack
