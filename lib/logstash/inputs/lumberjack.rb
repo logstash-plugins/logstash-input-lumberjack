@@ -1,6 +1,10 @@
 # encoding: utf-8
 require "logstash/inputs/base"
 require "logstash/namespace"
+require "lumberjack"
+
+# use Logstash provided json decoder
+Lumberjack::json = LogStash::Json
 
 # Receive events using the lumberjack protocol.
 #
@@ -72,16 +76,15 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
       # Wrappingu the accept call into a CircuitBreaker
       if @circuit_breaker.closed?
         connection = @lumberjack.accept # Blocking call that creates a new connection
-
-        invoke(connection, @codec.clone) do |_codec, line, fields|
-          _codec.decode(line) do |event|
-            begin
-              decorate(event)
-              fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
-              @circuit_breaker.execute { @buffered_queue.push(event, @congestion_threshold) }
-            rescue => e
-              raise e
-            end
+        connection = ConnectionDecorator.new(EventDecoration.new,
+                                             @codec.clone, connection)
+        invoke(connection) do |event|
+          begin
+            @circuit_breaker.execute {
+              @buffered_queue.push(event, @congestion_threshold)
+            }
+          rescue => e
+            raise e
           end
         end
       else
@@ -96,22 +99,20 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   end # def run
 
   private
-  def invoke(connection, codec, &block)
+  def invoke(connection, &block)
     @threadpool.post do
       begin
-        # If any errors occur in from the events the connection should be closed in the 
+        # If any errors occur in from the events the connection should be closed in the
         # library ensure block and the exception will be handled here
-        connection.run do |fields|
-          block.call(codec, fields.delete("line"), fields)
-        end
+        connection.run(&block)
 
-        # When too many errors happen inside the circuit breaker it will throw 
+        # When too many errors happen inside the circuit breaker it will throw
         # this exception and start refusing connection. The bubbling of theses
-        # exceptions make sure that the lumberjack library will close the current 
+        # exceptions make sure that the lumberjack library will close the current
         # connection which will force the client to reconnect and restransmit
         # his payload.
       rescue LogStash::CircuitBreaker::OpenBreaker,
-        LogStash::CircuitBreaker::HalfOpenBreaker => e
+             LogStash::CircuitBreaker::HalfOpenBreaker => e
         logger.warn("Lumberjack input: The circuit breaker has detected a slowdown or stall in the pipeline, the input is closing the current connection and rejecting new connection until the pipeline recover.", :exception => e.class)
       rescue => e # If we have a malformed packet we should handle that so the input doesn't crash completely.
         @logger.error("Lumberjack input: unhandled exception", :exception => e, :backtrace => e.backtrace)
@@ -126,4 +127,69 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
       end
     end
   end
+
+  class EventDecoration < LogStash::Inputs::Base
+    public
+    def decorate(event)
+      super(event)
+    end
+  end # class EventDecoration
+
+  class ConnectionDecorator < SimpleDelegator
+    def initialize(event_decoration, codec, connection)
+      super(connection)
+      @event_decoration = event_decoration
+      @codec = codec
+    end
+
+    public
+    def run(&block)
+      super do |type, event|
+        case type
+        when :json; json_event(event, &block)
+        when :data; data_event(event, &block)
+        else; raise "unknown event type received"
+        end
+      end
+    end
+
+    private
+    def json_event(map, &block)
+      if map.is_a?(Array)
+        map.each { |item| json_event(item, &block) }
+      else
+        line = map.delete("line")
+        if line.nil?
+          event = LogStash::Event.new(map)
+          decorate(event)
+          yield event
+        else
+          @codec.decode(line) do |decoded|
+            decorate(decoded)
+            map.each { |k,v| decoded[k] = v }
+            yield decoded
+          end
+        end
+      end
+    end
+
+    private
+    def data_event(fields)
+      line = fields.delete("line")
+      @codec.decode(line) do |event|
+        begin
+          decorate(event)
+          fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
+          yield event
+        rescue => e
+          raise e
+        end
+      end
+    end
+
+    private
+    def decorate(event)
+      @event_decoration.decorate(event)
+    end
+  end # ConnectionDecorator
 end # class LogStash::Inputs::Lumberjack
