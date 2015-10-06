@@ -29,24 +29,20 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   # SSL key passphrase to use.
   config :ssl_key_passphrase, :validate => :password
 
-  # Optional SSL certificate chain to use
-  config :ssl_cert_chain, :validate => :string
+  # This setting no longer has any effect and will be removed in a future release.
+  config :max_clients, :validate => :number, :deprecated => "This setting no longer has any effect. See https://github.com/logstash-plugins/logstash-input-lumberjack/pull/12 for the history of this change"
 
-  # The lumberjack input using a fixed thread pool to do the actual work and
-  # will accept a number of client in a queue, before starting to refuse new
-  # connection. This solve an issue when logstash-forwarder clients are 
-  # trying to connect to logstash which have a blocked pipeline and will 
-  # make logstash crash with an out of memory exception.
-  config :max_clients, :validate => :number, :default => 1000
+  # The number of seconds before we raise a timeout,
+  # this option is useful to control how much time to wait if something is blocking the pipeline.
+  config :congestion_threshold, :validate => :number, :default => 5
 
   # TODO(sissel): Add CA to authenticate clients with.
-
-  BUFFERED_QUEUE_SIZE = 20
+  BUFFERED_QUEUE_SIZE = 1
   RECONNECT_BACKOFF_SLEEP = 0.5
-  
+
   def register
     require "lumberjack/server"
-    require "concurrent/executors"
+    require "concurrent"
     require "logstash/circuit_breaker"
     require "logstash/sized_queue_timeout"
 
@@ -55,16 +51,9 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
       :ssl_certificate => @ssl_certificate, :ssl_key => @ssl_key,
       :ssl_key_passphrase => @ssl_key_passphrase, :ssl_cert_chain => @ssl_cert_chain)
 
-    # Limit the number of thread that can be created by the
-    # Limit the number of thread that can be created by the 
-    # lumberjack output, if the queue is full the input will 
-    # start rejecting new connection and raise an exception
-    @threadpool = Concurrent::ThreadPoolExecutor.new(
-      :min_threads => 1,
-      :max_threads => @max_clients,
-      :max_queue => 1, # in concurrent-ruby, bounded queue need to be at least 1.
-      fallback_policy: :abort
-    )
+    # Create a reusable threadpool, we do not limit the number of connections
+    # to the input, the circuit breaker with the timeout should take care
+    # of `blocked` threads and prevent logstash to go oom.
     @threadpool = Concurrent::CachedThreadPool.new(:idletime => 15)
 
     # in 1.5 the main SizeQueue doesnt have the concept of timeout
@@ -80,52 +69,52 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     start_buffer_broker(output_queue)
 
     while true do
-      begin
-        # Wrapping the accept call into a CircuitBreaker
-        if @circuit_breaker.closed?
-          connection = @lumberjack.accept # Blocking call that creates a new connection
+      # Wrappingu the accept call into a CircuitBreaker
+      if @circuit_breaker.closed?
+        connection = @lumberjack.accept # Blocking call that creates a new connection
 
-          invoke(connection, codec.clone) do |_codec, line, fields|
-            _codec.decode(line) do |event|
+        invoke(connection, @codec.clone) do |_codec, line, fields|
+          _codec.decode(line) do |event|
+            begin
               decorate(event)
               fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
-
-              @circuit_breaker.execute { @buffered_queue << event }
+              @circuit_breaker.execute { @buffered_queue.push(event, @congestion_threshold) }
+            rescue => e
+              raise e
             end
           end
-        else
-          @logger.warn("Lumberjack input: the pipeline is blocked, temporary refusing new connection.")
-          sleep(RECONNECT_BACKOFF_SLEEP)
         end
-        # When too many errors happen inside the circuit breaker it will throw 
-        # this exception and start refusing connection, we need to catch it but 
-        # it's safe to ignore.
-      rescue LogStash::CircuitBreaker::OpenBreaker => e
+      else
+        @logger.warn("Lumberjack input: the pipeline is blocked, temporary refusing new connection.")
+        sleep(RECONNECT_BACKOFF_SLEEP)
       end
     end
   rescue LogStash::ShutdownSignal
     @logger.info("Lumberjack input: received ShutdownSignal")
-  rescue => e
-    @logger.error("Lumberjack input: unhandled exception", :exception => e, :backtrace => e.backtrace)
   ensure
     shutdown(output_queue)
   end # def run
 
   private
-  def accept(&block)
-    connection = @lumberjack.accept # Blocking call that creates a new connection
-    block.call(connection, @codec.clone)
-  end
-
-  private
   def invoke(connection, codec, &block)
     @threadpool.post do
       begin
+        # If any errors occur in from the events the connection should be closed in the
+        # library ensure block and the exception will be handled here
         connection.run do |fields|
           block.call(codec, fields.delete("line"), fields)
         end
-      rescue => e
-        @logger.error("Exception in lumberjack input thread", :exception => e)
+
+        # When too many errors happen inside the circuit breaker it will throw
+        # this exception and start refusing connection. The bubbling of theses
+        # exceptions make sure that the lumberjack library will close the current
+        # connection which will force the client to reconnect and restransmit
+        # his payload.
+      rescue LogStash::CircuitBreaker::OpenBreaker,
+        LogStash::CircuitBreaker::HalfOpenBreaker => e
+        logger.warn("Lumberjack input: The circuit breaker has detected a slowdown or stall in the pipeline, the input is closing the current connection and rejecting new connection until the pipeline recover.", :exception => e.class)
+      rescue => e # If we have a malformed packet we should handle that so the input doesn't crash completely.
+        @logger.error("Lumberjack input: unhandled exception", :exception => e, :backtrace => e.backtrace)
       end
     end
   end
