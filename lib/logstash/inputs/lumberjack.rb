@@ -31,7 +31,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
   # This setting no longer has any effect and will be removed in a future release.
   config :max_clients, :validate => :number, :deprecated => "This setting no longer has any effect. See https://github.com/logstash-plugins/logstash-input-lumberjack/pull/12 for the history of this change"
-  
+
   # The number of seconds before we raise a timeout,
   # this option is useful to control how much time to wait if something is blocking the pipeline.
   config :congestion_threshold, :validate => :number, :default => 5
@@ -39,7 +39,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   # TODO(sissel): Add CA to authenticate clients with.
   BUFFERED_QUEUE_SIZE = 1
   RECONNECT_BACKOFF_SLEEP = 0.5
-  
+
   def register
     require "lumberjack/server"
     require "concurrent"
@@ -49,10 +49,10 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     @logger.info("Starting lumberjack input listener", :address => "#{@host}:#{@port}")
     @lumberjack = Lumberjack::Server.new(:address => @host, :port => @port,
       :ssl_certificate => @ssl_certificate, :ssl_key => @ssl_key,
-      :ssl_key_passphrase => @ssl_key_passphrase)
+      :ssl_key_passphrase => @ssl_key_passphrase, :ssl_cert_chain => @ssl_cert_chain)
 
     # Create a reusable threadpool, we do not limit the number of connections
-    # to the input, the circuit breaker with the timeout should take care 
+    # to the input, the circuit breaker with the timeout should take care
     # of `blocked` threads and prevent logstash to go oom.
     @threadpool = Concurrent::CachedThreadPool.new(:idletime => 15)
 
@@ -105,15 +105,15 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   def invoke(connection, codec, &block)
     @threadpool.post do
       begin
-        # If any errors occur in from the events the connection should be closed in the 
+        # If any errors occur in from the events the connection should be closed in the
         # library ensure block and the exception will be handled here
         connection.run do |fields|
           block.call(codec, fields.delete("line"), fields)
         end
 
-        # When too many errors happen inside the circuit breaker it will throw 
+        # When too many errors happen inside the circuit breaker it will throw
         # this exception and start refusing connection. The bubbling of theses
-        # exceptions make sure that the lumberjack library will close the current 
+        # exceptions make sure that the lumberjack library will close the current
         # connection which will force the client to reconnect and restransmit
         # his payload.
       rescue LogStash::CircuitBreaker::OpenBreaker,

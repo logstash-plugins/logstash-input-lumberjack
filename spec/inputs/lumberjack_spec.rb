@@ -13,7 +13,7 @@ describe LogStash::Inputs::Lumberjack do
   let(:certificate) { LogStashTest.certificate }
   let(:port) { LogStashTest.random_port }
   let(:queue)  { Queue.new }
-  let(:config)   { { "port" => 0, "ssl_certificate" => certificate.ssl_cert, "ssl_key" => certificate.ssl_key, "type" => "example", "tags" => "lumberjack" } }
+  let(:config)   { { "port" => 0, "ssl_certificate" => certificate.ssl_cert, "ssl_key" => certificate.ssl_key, "ssl_cert_chain" => nil, "type" => "example", "tags" => "lumberjack" } }
 
   subject(:lumberjack) { LogStash::Inputs::Lumberjack.new(config) }
 
@@ -36,7 +36,7 @@ describe LogStash::Inputs::Lumberjack do
     context "#codecs" do
       let(:config) do
         { "port" => port, "ssl_certificate" => certificate.ssl_cert, "ssl_key" => certificate.ssl_key,
-          "type" => "example", "codec" => codec }
+          "ssl_cert_chain" => nil, "type" => "example", "codec" => codec }
       end
 
       let(:codec) { LogStash::Codecs::Multiline.new("pattern" => '\n', "what" => "previous") }
