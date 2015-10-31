@@ -26,9 +26,6 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   # SSL key to use.
   config :ssl_key, :validate => :path, :required => true
 
-  # SSL key passphrase to use.
-  config :ssl_key_passphrase, :validate => :password
-
   # This setting no longer has any effect and will be removed in a future release.
   config :max_clients, :validate => :number, :deprecated => "This setting no longer has any effect. See https://github.com/logstash-plugins/logstash-input-lumberjack/pull/12 for the history of this change"
   
@@ -48,8 +45,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
     @logger.info("Starting lumberjack input listener", :address => "#{@host}:#{@port}")
     @lumberjack = Lumberjack::Server.new(:address => @host, :port => @port,
-      :ssl_certificate => @ssl_certificate, :ssl_key => @ssl_key,
-      :ssl_key_passphrase => @ssl_key_passphrase)
+      :ssl_certificate => @ssl_certificate, :ssl_key => @ssl_key)
 
     # Create a reusable threadpool, we do not limit the number of connections
     # to the input, the circuit breaker with the timeout should take care 
