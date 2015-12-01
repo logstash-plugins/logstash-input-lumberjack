@@ -6,14 +6,18 @@ require "logstash/codecs/plain"
 require "logstash/codecs/multiline"
 require "logstash/event"
 require "lumberjack/client"
+require "lumberjack/server"
 
 Thread.abort_on_exception = true
 describe LogStash::Inputs::Lumberjack do
   let(:connection) { double("connection") }
   let(:certificate) { LogStashTest.certificate }
-  let(:port) { LogStashTest.random_port }
-  let(:queue)  { Queue.new }
-  let(:config)   { { "port" => 0, "ssl_certificate" => certificate.ssl_cert, "ssl_key" => certificate.ssl_key, "type" => "example", "tags" => "lumberjack" } }
+  let(:queue)  { [] }
+  let(:config)   { { "port" => 0,
+                     "ssl_certificate" => certificate.ssl_cert,
+                     "ssl_key" => certificate.ssl_key,
+                     "type" => "example",
+                     "tags" => "lumberjack" } }
 
   subject(:lumberjack) { LogStash::Inputs::Lumberjack.new(config) }
 
@@ -25,25 +29,39 @@ describe LogStash::Inputs::Lumberjack do
   end
 
   describe "#processing of events" do
-    let(:lines) { {"line" => "one\ntwo\n  two.2\nthree\n", "tags" => ["syslog"]} }
-
-    before do
-      allow(connection).to receive(:run).and_yield(lines)
-      lumberjack.register
-      expect_any_instance_of(Lumberjack::Server).to receive(:accept).and_return(connection)
-    end
-
-    context "#codecs" do
-      let(:config) do
-        { "port" => port, "ssl_certificate" => certificate.ssl_cert, "ssl_key" => certificate.ssl_key,
-          "type" => "example", "codec" => codec }
+    context "multiline" do
+      let(:codec) { LogStash::Codecs::Multiline.new("pattern" => '^2015',
+                                                    "what" => "previous",
+                                                    "negate" => true) }
+      let(:config) { super.merge({ "codec" => codec }) }
+      let(:events_map) do
+        [
+          { "host" => "machineA", "file" => "/var/log/line", "line" => "2015-11-10 10:14:38,907 line 1" },
+          { "host" => "machineA", "file" => "/var/log/line", "line" => "line 1.1" },
+          { "host" => "machineA", "file" => "/var/log/line", "line" => "2015-11-10 10:16:38,907 line 2" },
+          { "host" => "machineA", "file" => "/var/log/line", "line" => "line 2.1" },
+          { "host" => "machineA", "file" => "/var/log/line", "line" => "line 2.2" },
+          { "host" => "machineA", "file" => "/var/log/line", "line" => "line 2.3" },
+          { "host" => "machineA", "file" => "/var/log/line", "line" => "2015-11-10 10:18:38,907 line 3" }
+        ]
       end
 
-      let(:codec) { LogStash::Codecs::Multiline.new("pattern" => '\n', "what" => "previous") }
-      it "clone the codec per connection" do
-        expect(lumberjack.codec).to receive(:clone).once
-        expect(lumberjack).to receive(:invoke) { break }
-        lumberjack.run(queue)
+      before do
+        lumberjack.register
+        Thread.new { lumberjack.run(queue) }
+      end
+
+      it "should correctly merge multiple events" do
+        # This test, cannot currently work without explicitely call a flush
+        # the flush is never timebased, if no new data is coming in we wont flush the buffer
+        # https://github.com/logstash-plugins/logstash-codec-multiline/issues/11
+        events_map.each { |e| lumberjack.create_event(e) { |e| queue << e } }
+        lumberjack.stop
+
+        expect(queue.size).to eq(3)
+        expect(queue.collect { |e| e["message"] }).to include("2015-11-10 10:14:38,907 line 1\nline 1.1",
+                                                              "2015-11-10 10:16:38,907 line 2\nline 2.1\nline 2.2\nline 2.3",
+                                                              "2015-11-10 10:18:38,907 line 3")
       end
     end
   end

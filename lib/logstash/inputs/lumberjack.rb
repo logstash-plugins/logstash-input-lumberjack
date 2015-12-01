@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "logstash/inputs/base"
 require "logstash/namespace"
+require "logstash/codecs/identity_map_codec"
 
 # Receive events using the lumberjack protocol.
 #
@@ -63,31 +64,28 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     @circuit_breaker = LogStash::CircuitBreaker.new("Lumberjack input",
                             :exceptions => [LogStash::SizedQueueTimeout::TimeoutError])
 
+    @codec = LogStash::Codecs::IdentityMapCodec.new(@codec)
   end # def register
 
   def run(output_queue)
-    start_buffer_broker(output_queue)
+    @output_queue = output_queue
+    start_buffer_broker
 
+    @codec.eviction_block(method(:flush_event))
+
+    # Accepting new events coming from LSF
     while !stop? do
-      # Wrappingu the accept call into a CircuitBreaker
+      # Wrapping the accept call into a CircuitBreaker
       if @circuit_breaker.closed?
         connection = @lumberjack.accept # call that creates a new connection
         next if connection.nil? # if the connection is nil the connection was close.
-        invoke(connection, @codec.clone) do |_codec, line, fields|
+        invoke(connection) do |event|
           if stop?
             connection.close
             break
           end
 
-          _codec.decode(line) do |event|
-            begin
-              decorate(event)
-              fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
-              @circuit_breaker.execute { @buffered_queue.push(event, @congestion_threshold) }
-            rescue => e
-              raise e
-            end
-          end
+          @circuit_breaker.execute { @buffered_queue.push(event, @congestion_threshold) }
         end
       else
         @logger.warn("Lumberjack input: the pipeline is blocked, temporary refusing new connection.")
@@ -99,16 +97,52 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   public
   def stop
     @lumberjack.close
+    @codec.flush { |event| flush_event(event) }
+  end
+
+  # I have created this method to make testing a lot easier,
+  # mocking multiples levels of block is unfriendly especially with 
+  # connection based block.
+  public
+  def create_event(fields, &block)
+    line = fields.delete("line")
+
+    @codec.decode(line, identity(fields)) do |event|
+      decorate(event)
+      fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
+      block.call(event)
+    end
   end
 
   private
-  def invoke(connection, codec, &block)
+  # It use the host and the file as the differentiator,
+  # if anything is provided it should fallback to an empty string.
+  def identity(fields)
+    [fields["host"], fields["file"]].compact.join("-")
+  end
+  # There is a problem with the way the codecs work for this specific input,
+  # when the data is decoded there is no way to attach metadata with the decoded line.
+  # If you look at the block used by `@codec.decode`  it reference the fields variable
+  # which is available when the proc is created, the problem is that variable with the data is 
+  # not available at eviction time or when we force a flush on the codec before 
+  # shutting down the input.
+  #
+  # Not defining the method will make logstash lose data, so Its still better to force a flush
+  #
+  # See this issue https://github.com/elastic/logstash/issues/4289 for more discussion
+  def flush_event(event)
+    decorate(event)
+    @output_queue << event
+  end
+
+  private
+  def invoke(connection, &block)
     @threadpool.post do
       begin
         # If any errors occur in from the events the connection should be closed in the 
         # library ensure block and the exception will be handled here
         connection.run do |fields|
-          block.call(codec, fields.delete("line"), fields)
+          create_event(fields, &block)
         end
 
         # When too many errors happen inside the circuit breaker it will throw 
@@ -125,10 +159,10 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     end
   end
 
-  def start_buffer_broker(output_queue)
+  def start_buffer_broker
     @threadpool.post do
       while !stop?
-        output_queue << @buffered_queue.pop_no_timeout
+        @output_queue << @buffered_queue.pop_no_timeout
       end
     end
   end
