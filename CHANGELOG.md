@@ -1,3 +1,6 @@
+## 2.0.5
+ - Add support for `stream_identity` to make the lumberjack input able to do disambiguation of file when using the multiline codec #53
+
 ## 2.0.4
  - Update `ruby-lumberjack` dependency to 0.0.26
   
