@@ -32,15 +32,19 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
   # This setting no longer has any effect and will be removed in a future release.
   config :max_clients, :validate => :number, :deprecated => "This setting no longer has any effect. See https://github.com/logstash-plugins/logstash-input-lumberjack/pull/12 for the history of this change"
-  
+
   # The number of seconds before we raise a timeout,
   # this option is useful to control how much time to wait if something is blocking the pipeline.
   config :congestion_threshold, :validate => :number, :default => 5
 
+  # The amount of time in seconds to wait before retrying to open the circuit breaker
+  # again and accepts new events.
+  config :congestion_backoff_delay, :validate => :number, :default => 30
+
   # TODO(sissel): Add CA to authenticate clients with.
   BUFFERED_QUEUE_SIZE = 1
   RECONNECT_BACKOFF_SLEEP = 0.5
-  
+
   def register
     require "lumberjack/server"
     require "concurrent"
@@ -53,7 +57,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
       :ssl_key_passphrase => @ssl_key_passphrase)
 
     # Create a reusable threadpool, we do not limit the number of connections
-    # to the input, the circuit breaker with the timeout should take care 
+    # to the input, the circuit breaker with the timeout should take care
     # of `blocked` threads and prevent logstash to go oom.
     @threadpool = Concurrent::CachedThreadPool.new(:idletime => 15)
 
@@ -62,6 +66,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     @buffered_queue = LogStash::SizedQueueTimeout.new(BUFFERED_QUEUE_SIZE)
 
     @circuit_breaker = LogStash::CircuitBreaker.new("Lumberjack input",
+                            :congestion_backoff_delay => @congestion_backoff_delay,
                             :exceptions => [LogStash::SizedQueueTimeout::TimeoutError])
 
     @codec = LogStash::Codecs::IdentityMapCodec.new(@codec)
@@ -101,7 +106,7 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   end
 
   # I have created this method to make testing a lot easier,
-  # mocking multiples levels of block is unfriendly especially with 
+  # mocking multiples levels of block is unfriendly especially with
   # connection based block.
   public
   def create_event(fields, &block)
@@ -123,8 +128,8 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   # There is a problem with the way the codecs work for this specific input,
   # when the data is decoded there is no way to attach metadata with the decoded line.
   # If you look at the block used by `@codec.decode`  it reference the fields variable
-  # which is available when the proc is created, the problem is that variable with the data is 
-  # not available at eviction time or when we force a flush on the codec before 
+  # which is available when the proc is created, the problem is that variable with the data is
+  # not available at eviction time or when we force a flush on the codec before
   # shutting down the input.
   #
   # Not defining the method will make logstash lose data, so Its still better to force a flush
@@ -139,15 +144,15 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   def invoke(connection, &block)
     @threadpool.post do
       begin
-        # If any errors occur in from the events the connection should be closed in the 
+        # If any errors occur in from the events the connection should be closed in the
         # library ensure block and the exception will be handled here
         connection.run do |fields|
           create_event(fields, &block)
         end
 
-        # When too many errors happen inside the circuit breaker it will throw 
+        # When too many errors happen inside the circuit breaker it will throw
         # this exception and start refusing connection. The bubbling of theses
-        # exceptions make sure that the lumberjack library will close the current 
+        # exceptions make sure that the lumberjack library will close the current
         # connection which will force the client to reconnect and restransmit
         # his payload.
       rescue LogStash::CircuitBreaker::OpenBreaker,

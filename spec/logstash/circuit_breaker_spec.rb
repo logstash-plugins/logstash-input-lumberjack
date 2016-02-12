@@ -1,3 +1,4 @@
+# encoding: utf-8
 require_relative "../spec_helper"
 require "logstash/circuit_breaker"
 
@@ -5,14 +6,32 @@ class DummyErrorTest < StandardError; end
 
 describe LogStash::CircuitBreaker do
   let(:error_threshold) { 1 }
-  let(:options) do 
+  let(:options) do
     {
       :exceptions => [DummyErrorTest],
-      :error_threshold => error_threshold 
+      :error_threshold => error_threshold
     }
   end
 
   subject { LogStash::CircuitBreaker.new("testing", options) }
+
+  context "#initialize" do
+    let(:options) { super.merge(:congestion_backoff_delay => congestion_backoff_delay) }
+
+    context "when `congestion_backoff_delay` is negative" do
+      let(:congestion_backoff_delay) { -10 }
+      it "raises an exception" do
+        expect { subject }.to raise_error(LogStash::ConfigurationError)
+      end
+    end
+
+    context "when `congestion_backoff_delay` is positve" do
+      let(:congestion_backoff_delay) { 10 }
+      it "doesnt raise an exception" do
+        expect { subject }.not_to raise_error
+      end
+    end
+  end
 
   context "when the breaker is closed" do
     it "closed by default" do
@@ -73,7 +92,7 @@ describe LogStash::CircuitBreaker do
         subject.execute do
           runned = true
         end
-      rescue LogStash::CircuitBreaker::OpenBreaker 
+      rescue LogStash::CircuitBreaker::OpenBreaker
       end
 
       expect(runned).to eq(false)

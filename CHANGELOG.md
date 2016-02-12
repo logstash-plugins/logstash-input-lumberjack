@@ -1,3 +1,5 @@
+## 2.0.6
+ - Expose the `congestion_backoff_delay` to the user to allow them to control the recovering time when back pressure happen. #71
 ## 2.0.5
  - Add support for `stream_identity` to make the lumberjack input able to do disambiguation of file when using the multiline codec #53
 
