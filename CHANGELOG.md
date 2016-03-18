@@ -1,3 +1,5 @@
+# 2.0.6
+  - New dependency requirements for logstash-core for the 5.0 release
 ## 2.0.5
  - Add support for `stream_identity` to make the lumberjack input able to do disambiguation of file when using the multiline codec #53
 
