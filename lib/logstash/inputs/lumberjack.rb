@@ -109,7 +109,10 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
     @codec.decode(line, identity(fields)) do |event|
       decorate(event)
-      fields.each { |k,v| event[k] = v; v.force_encoding(Encoding::UTF_8) }
+      fields.each do |k,v|
+        v.force_encoding(Encoding::UTF_8)
+        event.set(k,v)
+      end
       block.call(event)
     end
   end

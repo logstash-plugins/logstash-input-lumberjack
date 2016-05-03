@@ -66,12 +66,12 @@ describe LogStash::Inputs::Lumberjack do
         lumberjack.stop
 
         expect(queue.size).to eq(6)
-        expect(queue.collect { |e| e["message"] }).to include("2015-11-10 10:14:38,907 line 1\nline 1.1",
-                                                              "2015-11-10 10:14:38,907 xline 1\nxline 1.1",
-                                                              "2015-11-10 10:16:38,907 line 2\nline 2.1\nline 2.2\nline 2.3",
-                                                              "2015-11-10 10:16:38,907 xline 2\nxline 2.1\nxline 2.2\nxline 2.3",
-                                                              "2015-11-10 10:18:38,907 line 3",
-                                                              "2015-11-10 10:18:38,907 xline 3")
+        expect(queue.collect { |e| e.get("message") }).to include("2015-11-10 10:14:38,907 line 1\nline 1.1",
+                                                                  "2015-11-10 10:14:38,907 xline 1\nxline 1.1",
+                                                                  "2015-11-10 10:16:38,907 line 2\nline 2.1\nline 2.2\nline 2.3",
+                                                                  "2015-11-10 10:16:38,907 xline 2\nxline 2.1\nxline 2.2\nxline 2.3",
+                                                                  "2015-11-10 10:18:38,907 line 3",
+                                                                  "2015-11-10 10:18:38,907 xline 3")
       end
     end
   end
