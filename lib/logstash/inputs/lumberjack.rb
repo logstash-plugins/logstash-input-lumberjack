@@ -3,11 +3,17 @@ require "logstash/inputs/base"
 require "logstash/namespace"
 require "logstash/codecs/identity_map_codec"
 
-# Receive events using the lumberjack protocol.
+# Receive events using the Lumberjack protocol.
 #
-# This is mainly to receive events shipped with lumberjack[http://github.com/jordansissel/lumberjack],
-# now represented primarily via the
-# https://github.com/elasticsearch/logstash-forwarder[Logstash-forwarder].
+# This input can be used to reliably and securely transport
+# events between Logstash instances. To do so, use the
+# <<plugins-outputs-lumberjack,lumberjack output plugin>>
+# in the sending Logstash instance(s).
+#
+# It can also be used to receive events from the deprecated
+# https://github.com/elastic/logstash-forwarder[logstash-forwarder]
+# tool that has been replaced by
+# https://github.com/elastic/beats/tree/master/filebeat[Filebeat].
 #
 class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
