@@ -1,3 +1,5 @@
+# 2.0.8
+  - Do not use the IdentityMap unless we explicitely use the multiline codec #77
 # 2.0.7
   - Depend on logstash-core-plugin-api instead of logstash-core, removing the need to mass update plugins on major releases of logstash
 # 2.0.6
