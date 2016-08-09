@@ -1,3 +1,6 @@
+## 3.1.2
+  - Do not use the IdentityMap unless we explicitely use the multiline codec #78, #77
+
 ## 3.1.1
   - Relax constraint on logstash-core-plugin-api to >= 1.60 <= 2.99
 
