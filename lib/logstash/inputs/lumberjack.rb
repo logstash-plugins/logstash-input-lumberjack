@@ -67,14 +67,16 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     @circuit_breaker = LogStash::CircuitBreaker.new("Lumberjack input",
                             :exceptions => [LogStash::SizedQueueTimeout::TimeoutError])
 
-    @codec = LogStash::Codecs::IdentityMapCodec.new(@codec)
+    if need_identity_map?
+      @codec = LogStash::Codecs::IdentityMapCodec.new(@codec)
+      @codec.eviction_block(method(:flush_event))
+    end
   end # def register
 
   def run(output_queue)
     @output_queue = output_queue
     start_buffer_broker
 
-    @codec.eviction_block(method(:flush_event))
 
     # Accepting new events coming from LSF
     while !stop? do
@@ -171,5 +173,9 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
         @output_queue << @buffered_queue.pop_no_timeout
       end
     end
+  end
+
+  def need_identity_map?
+    @codec.kind_of?(LogStash::Codecs::Multiline)
   end
 end # class LogStash::Inputs::Lumberjack
