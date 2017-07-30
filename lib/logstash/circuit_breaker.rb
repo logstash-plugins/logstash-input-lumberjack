@@ -43,10 +43,11 @@ module LogStash
         else
           @block.call(args)
         end
-
+        
+        reset
+        
         if state == :half_open
           logger.warn("CircuitBreaker::Close", :name => @name)
-          reset
         end
       end
     rescue *@exceptions => e
