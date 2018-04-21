@@ -27,11 +27,14 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
   # The port to listen on.
   config :port, :validate => :number, :required => true
 
+  # SSL enablement
+  config :ssl, :validate => :boolean, :default => true
+
   # SSL certificate to use.
-  config :ssl_certificate, :validate => :path, :required => true
+  config :ssl_certificate, :validate => :path
 
   # SSL key to use.
-  config :ssl_key, :validate => :path, :required => true
+  config :ssl_key, :validate => :path
 
   # SSL key passphrase to use.
   config :ssl_key_passphrase, :validate => :password
@@ -50,9 +53,16 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
     require "logstash/circuit_breaker"
     require "logstash/sized_queue_timeout"
 
+    if !@ssl
+      @logger.warn("SSL Certificate will not be used") unless @ssl_certificate.nil?
+      @logger.warn("SSL Key will not be used") unless @ssl_key.nil?
+    elsif !ssl_configured?
+      raise LogStash::ConfigurationError, "Certificate or Certificate Key not configured"
+    end
+
     @logger.info("Starting lumberjack input listener", :address => "#{@host}:#{@port}")
     @lumberjack = Lumberjack::Server.new(:address => @host, :port => @port,
-      :ssl_certificate => @ssl_certificate, :ssl_key => @ssl_key,
+      :ssl => @ssl, :ssl_certificate => @ssl_certificate, :ssl_key => @ssl_key,
       :ssl_key_passphrase => @ssl_key_passphrase)
 
     # Create a reusable threadpool, we do not limit the number of connections
@@ -69,6 +79,10 @@ class LogStash::Inputs::Lumberjack < LogStash::Inputs::Base
 
     @codec = LogStash::Codecs::IdentityMapCodec.new(@codec)
   end # def register
+
+  def ssl_configured?
+    !(@ssl_certificate.nil? || @ssl_key.nil?)
+  end
 
   def run(output_queue)
     @output_queue = output_queue
