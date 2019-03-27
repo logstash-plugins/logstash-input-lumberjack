@@ -1,3 +1,6 @@
+## 3.1.6
+  - Changed documentation to suggest Beats input as alternative [#39](https://github.com/logstash-plugins/logstash-input-lumberjack/pull/39)
+
 ## 3.1.5
   - Docs: Set the default_codec doc attribute.
 
