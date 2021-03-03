@@ -34,7 +34,7 @@ describe LogStash::Inputs::Lumberjack do
       let(:codec) { LogStash::Codecs::Multiline.new("pattern" => '^2015',
                                                     "what" => "previous",
                                                     "negate" => true) }
-      let(:config) { super.merge({ "codec" => codec }) }
+      let(:config) { super().merge({ "codec" => codec }) }
       let(:events_map) do
         [
           { "host" => "machineA", "file" => "/var/log/line", "line" => "2015-11-10 10:14:38,907 line 1" },
